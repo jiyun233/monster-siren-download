@@ -1,11 +1,12 @@
 import os
+import time
 import requests
 from tqdm import tqdm
 import pylrc
 import json
 
 from PIL import Image
-from multiprocessing import Pool, Manager
+from multiprocessing import Pool, Manager, Value
 from mutagen.easyid3 import EasyID3
 from mutagen.id3 import APIC, SYLT, Encoding, ID3
 from mutagen.flac import Picture, FLAC
@@ -98,7 +99,7 @@ def fill_metadata(filename, filetype, album, title, albumartist, artist, tracknu
     return 
 
 
-def download_song(session, directory, name, url):
+def download_song(session, directory, name, url, counter=None):
     source = session.get(url, stream=True)
     filename = directory + '/' + make_valid(name)
     filetype = ''
@@ -129,6 +130,9 @@ def download_song(session, directory, name, url):
         filename = directory + '/' + make_valid(name) + '.flac'
         filetype = '.flac'
 
+    if counter is not None:
+        with counter.get_lock():
+            counter.value += 1
     return filename, filetype
 
 
@@ -137,6 +141,7 @@ def download_album( args):
     session = args['session']
     queue = args['queue']
     mutex = args['mutex']
+    counter = args['counter']
 
     album_cid = args['cid']
     album_name = args['name']
@@ -191,7 +196,7 @@ def download_album( args):
             songlyricpath = None
 
         # Download song and fill out metadata
-        filename, filetype = download_song(session=session, directory=directory + make_valid(album_name), name=song_name, url=song_sourceUrl)
+        filename, filetype = download_song(session=session, directory=directory + make_valid(album_name), name=song_name, url=song_sourceUrl, counter=counter)
         fill_metadata(filename=filename,
                         filetype=filetype,
                         album=album_name,
@@ -214,6 +219,7 @@ def main():
     manager = Manager()
     queue = manager.Queue()
     mutex = manager.Lock()
+    downloaded_songs = Value('i', 0)
 
     try:
         os.mkdir(directory)
@@ -228,15 +234,20 @@ def main():
         album['session'] = session
         album['queue'] = queue
         album['mutex'] = mutex
+        album['counter'] = downloaded_songs
 
-
+    start_time = time.perf_counter()
     with Pool(maxtasksperchild=1) as pool:
         pool.apply_async(update_downloaded_albums, (queue, directory, mutex))
         pool.map(download_album, albums)
         queue.put(None)
         pool.close()
         pool.join()
-    
+
+    elapsed = time.perf_counter() - start_time
+    minutes = int(elapsed // 60)
+    seconds = int(elapsed % 60)
+    print(f'Processed {len(albums)} albums, downloaded {downloaded_songs.value} songs in {minutes}m {seconds}s.')
     return
 
 
