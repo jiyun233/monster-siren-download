@@ -215,6 +215,7 @@ def download_album( args):
 
 def main():
     directory = './MonsterSiren/'
+    print(f"Current download directory:{directory}")
     session = requests.Session()
     manager = Manager()
     queue = manager.Queue()
